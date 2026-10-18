@@ -19,10 +19,15 @@ namespace BluePrinceQoL.Features;
 /// DAY/Cam Intro 1b and DOTweens it along Z (12s) and Y (5s delay, 4.6s) to
 /// DAY/Cam Intro 2. That tween is the glide.
 ///
-/// Skip: in "Cameras On" the fade-in and the 12s wait are disabled so the
-/// state finishes at once and "Mouse On" runs normally. The Cam Intro tween
-/// still runs (so the player ends at exactly the vanilla spot) but is zeroed
-/// and completed on the spot. No logic state is skipped.
+/// Skip: in "Cameras On" the fade-in and the 12s wait are shortened to HoldTime,
+/// then "Mouse On" runs normally. The Cam Intro tween still runs (so the player
+/// ends at exactly the vanilla spot) but is zeroed and completed on the spot.
+/// No logic state is skipped.
+/// The short hold matters: the teleport puts the player in the grounds tile in
+/// front of the house, and its trigger fires on the next physics step. In
+/// vanilla that happens during the glide, before "Mouse On" activates HUD/Steps
+/// and HUD/Room Text, so it is free. If "Mouse On" ran first (the wait switched
+/// off entirely, as in 1.0 to 2.4), the tile entry cost a step.
 /// The day-1 "watched the whole intro video" path ("Cameras On -Day 1") is
 /// left vanilla.
 /// </summary>
@@ -35,10 +40,10 @@ public class IntroSkipFeature : Feature
     private const string CamIntroObject = "Cam Intro 1";
     private static readonly HashSet<string> CameraStates = new() { "Cameras On", "Cameras On Curse" };
 
-    // Actions we switched off. They are only switched back on when the
-    // feature is off at the next entry of that state (the scene, and with
-    // it every FSM, is rebuilt each day anyway).
-    private readonly HashSet<System.IntPtr> _disabled = new();
+    // Real seconds between the teleport and "Mouse On": long enough for the
+    // physics steps that register the tile the player lands in.
+    private const float HoldTime = 0.3f;
+    private readonly StateDurations _durations = new();
 
     // Set while a skip is in progress: the next Cam Intro tween state is completed.
     private float _armedUntil = -1f;
@@ -48,7 +53,7 @@ public class IntroSkipFeature : Feature
     // Fallbacks for the frames after a skip.
     private PmFsm _dayFsm;
     private string _dayStateName;
-    private int _dayFrame;
+    private float _dayDeadline;
     private int _syncFrames;
 
     private bool _warnedCamIntro, _warnedNoActions, _warnedComplete, _warnedStuck;
@@ -66,16 +71,18 @@ public class IntroSkipFeature : Feature
         _dayFsm = null;
         _armedUntil = -1f;
         _syncFrames = 0;
+        _durations.RestoreAll();
     }
 
     private void OnBeforeEnter(FsmState state)
     {
+        _durations.OnEnter(state);
         var name = state.Name;
         if (CameraStates.Contains(name))
         {
             var go = state.Fsm?.GameObject;
             if (go == null || go.name != DayObject) return;
-            if (!Enabled) { Restore(state); return; }
+            if (!Enabled) return;
             SkipCameraState(state, go);
             return;
         }
@@ -96,7 +103,7 @@ public class IntroSkipFeature : Feature
         CompleteTweens(state);
     }
 
-    // DAY "Cameras On": turn off the fade-in and the 12s wait for this entry.
+    // DAY "Cameras On": shorten the fade-in and the 12s wait for this entry.
     private void SkipCameraState(FsmState state, GameObject day)
     {
         // Only skip the wait if the glide itself can be finished; otherwise the
@@ -109,37 +116,25 @@ public class IntroSkipFeature : Feature
             return;
         }
 
-        var n = 0;
+        _durations.Begin(state);
         foreach (var a in state.Actions)
         {
             if (a == null || !a.Enabled) continue;
-            if (!IsHoldAction(a)) continue;
-            a.Enabled = false;
-            _disabled.Add(a.Pointer);
-            n++;
+            if (a.TryCast<Wait>() is { } w) _durations.Scale(w.time, 0f, HoldTime, "Wait");
+            else if (a.TryCast<CameraFadeIn>() is { } fi) _durations.Scale(fi.time, 0f, HoldTime, "FadeIn");
         }
-        if (n == 0)
+        if (_durations.Commit() == null && !_warnedNoActions)
         {
-            if (!_warnedNoActions)
-                Core.Log.Warning($"[{Name}] no Wait/CameraFadeIn in DAY '{state.Name}'; will force FINISHED next frame");
+            Core.Log.Warning($"[{Name}] no Wait/CameraFadeIn to shorten in DAY '{state.Name}'; will force FINISHED if it waits");
             _warnedNoActions = true;
         }
 
         _armedUntil = Time.unscaledTime + 5f;
         _dayFsm = state.Fsm;
         _dayStateName = state.Name;
-        _dayFrame = Time.frameCount;
+        _dayDeadline = Time.unscaledTime + HoldTime + 2f;
         Core.Log.Msg($"[{Name}] skipping day-start glide ({state.Name})");
     }
-
-    private void Restore(FsmState state)
-    {
-        foreach (var a in state.Actions)
-            if (a != null && _disabled.Remove(a.Pointer) && IsHoldAction(a)) a.Enabled = true;
-    }
-
-    private static bool IsHoldAction(FsmStateAction a) =>
-        a.TryCast<Wait>() != null || a.TryCast<CameraFadeIn>() != null;
 
     private bool CamIntroLooksRight(GameObject day)
     {
@@ -203,6 +198,7 @@ public class IntroSkipFeature : Feature
 
     public override void OnUpdate()
     {
+        _durations.Tick();
         if (_syncFrames > 0)
         {
             _syncFrames--;
@@ -210,11 +206,12 @@ public class IntroSkipFeature : Feature
         }
 
         if (_dayFsm == null) return;
-        if (Time.frameCount <= _dayFrame) return;
+        if (_dayFsm.ActiveStateName != _dayStateName) { _dayFsm = null; return; }
+        if (Time.unscaledTime < _dayDeadline) return;
         var fsm = _dayFsm;
         _dayFsm = null;
-        // Normally the state has already finished on its own; if something
-        // else in it keeps it running, push it on to "Mouse On".
+        // Normally the shortened wait has finished the state long ago; if
+        // something else in it keeps it running, push it on to "Mouse On".
         if (fsm.ActiveStateName == _dayStateName)
         {
             if (!_warnedStuck)

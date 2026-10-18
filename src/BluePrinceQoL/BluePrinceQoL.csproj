@@ -6,7 +6,7 @@
     <Nullable>disable</Nullable>
     <AssemblyName>BluePrinceQoL</AssemblyName>
     <RootNamespace>BluePrinceQoL</RootNamespace>
-    <Version>2.4.0</Version>
+    <Version>2.4.1</Version>
     <Authors>Lucas Pospor</Authors>
     <Description>Blue Prince QoL: quality-of-life tweaks for Blue Prince (MelonLoader)</Description>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>

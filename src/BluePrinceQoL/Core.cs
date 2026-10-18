@@ -3,7 +3,7 @@ using BluePrinceQoL.Features;
 using BluePrinceQoL.Util;
 using MelonLoader;
 
-[assembly: MelonInfo(typeof(BluePrinceQoL.Core), "Blue Prince QoL", "2.4.0", "Lucas Pospor")]
+[assembly: MelonInfo(typeof(BluePrinceQoL.Core), "Blue Prince QoL", "2.4.1", "Lucas Pospor")]
 [assembly: MelonGame("Dogubomb", "BLUE PRINCE")]
 
 namespace BluePrinceQoL;
