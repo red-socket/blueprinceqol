@@ -28,6 +28,7 @@ Most of the mod removes waiting: shorter animations, fades and lock-outs that yo
 | Workshop | The black screen while an item is assembled at the Workshop table is 4× shorter, and the assembly sound fades out with it. |
 | Office safe | The bust in the Office that rises to reveal the safe moves 4× faster, and its rumble ends with it. |
 | Security room scene *(off by default)* | Skips the scene the first time you enter the Security room: the room behaves like one you've already visited, with no fade, no move to the middle of the room and no video. Turn it on in MODS → Cutscenes. |
+| Dartboard equation *(off by default)* | While you look at the Billiard Room dartboard, the puzzle is written out as an equation at the bottom of the screen, such as +4 - 1 × 2, with each sign in the colour of its sector. Read it left to right: that's the inner ring first, then outwards. Bullseye shapes and marks on the number ring are written out too, as in (+18 - 16)². The odd numbers around the board are tinted red. Turn it on in MODS → Display. |
 | End of day | The end-of-day fades and diary reveal are 4× faster. The Save & Continue screens still wait for you. |
 | Dare game over | In Dare mode, the Main Menu button on the Game Over screen shows up after 3 seconds instead of 10, and the fades around it are shorter. Press Space, Enter, Esc or click during the poem to skip ahead to the Game Over screen. |
 | Digging | Shorter fade to black when digging. |
@@ -121,6 +122,10 @@ Settings are in `UserData/MelonPreferences.cfg`, under `[BluePrinceQoL]`. The fi
 | `Workshop_Speed` | `4` | Speed of the black screen while assembling (1 = vanilla 6 s, at most 10). |
 | `OfficeCompartment_Speed` | `4` | Speed of the Office bust rising (1 = vanilla 8 s, at most 10). |
 | `SecurityVideo_Enabled` | `false` | Skip the first Security room scene (story content, so off by default). |
+| `DartsEquation_Enabled` | `false` | Dartboard equation and red odd numbers. |
+| `DartsEquation_RedOddNumbers` | `true` | Tint the odd numbers around the board while the equation is on. |
+| `DartsEquation_FontScale` / `DartsEquation_PosY` | `0.045` / `0.935` | Text size, and vertical position as a fraction of the screen from the top. |
+| `DartsEquation_Font` | `TypeNeat SDF` | Game font for the equation. Fonts without × and ÷ fall back to x and /. |
 | `EndOfDay_Speed` / `_StatsAllAtOnce` / `_MorningFade` | `4` / `false` / `true` | |
 | `DareGameOver_MenuDelay` | `3` | Seconds on the Game Over screen before the Main Menu button appears (vanilla: 10). |
 | `DareGameOver_SkipKeys` | `Space,Return,Escape,Mouse0` | Keys that skip the poem. Comma-separated Unity key names; `Mouse0` is left click. Leave empty to turn skipping off. |

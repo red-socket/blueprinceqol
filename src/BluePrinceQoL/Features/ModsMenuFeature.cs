@@ -102,6 +102,8 @@ public class ModsMenuFeature : Feature
                     "Adds a line under the clock with today's rooms, rank, colours, dead ends, digs, items and doors. F10 also shows or hides it."),
                 Check("Keep crosshair", "CursorGuard_Enabled",
                     "Keeps the crosshair visible while an object animates and you can still move, for example while a Parlor box's key turns."),
+                Check("Dart equation", "DartsEquation_Enabled",
+                    "Shows the Billiard Room dartboard puzzle as an equation at the bottom of the screen, with each sign in the colour of its sectors. The board's odd numbers turn slightly red."),
             },
         },
         new Page
