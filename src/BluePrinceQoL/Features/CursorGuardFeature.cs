@@ -37,9 +37,15 @@ namespace BluePrinceQoL.Features;
 /// freeze, a camera move or a fade and stay vanilla.
 ///
 /// Main menu (CursorGuard_MainMenu): its MOUSE MANAGER (scene root, FSM "FSM") hides the cursor on start and only
-/// draws one when NewCursor differs from CurrentCursor (both start at 0); the menu rows set NewCursor = 1 (pointer)
-/// once the menu has faded in. So the pointer is gone for a moment after every main menu load. The feature sets
-/// NewCursor = 1 as soon as the manager reaches "Cursor Check", once per load; the manager then draws it as usual.
+/// draws one when NewCursor differs from CurrentCursor (both start at 0). Other menu FSMs hide it again later without
+/// changing NewCursor: "Main selector enabler" ("Enable", 2.3 s after the menu appears) and "Main Camera/Music"
+/// ("Wait for Mouse"). The manager then sees no change and draws nothing until a hover asks for another cursor, so
+/// the pointer was gone for several seconds after every main menu load. For MenuWatch seconds after the load, while
+/// the manager sits in "Cursor Check" and the cursor is hidden, the feature sets CurrentCursor = -1 (and NewCursor = 1
+/// if nothing was asked yet), so the manager redraws its own cursor the next frame. Gamepad input sends the manager
+/// to "State 3" (cursor hidden for good), which is left alone. Polled, because at boot the hooks aren't installed yet.
+/// The redraw also follows those two hide states (in case the hide doesn't show in Cursor.visible), and it runs with
+/// CursorGuard_Enabled off: that switch is the crosshair part ("Keep crosshair"); this part has CursorGuard_MainMenu.
 /// </summary>
 public class CursorGuardFeature : Feature
 {
@@ -71,8 +77,16 @@ public class CursorGuardFeature : Feature
     private MelonPreferences_Entry<bool> _log, _mainMenu;
     private const string MenuMouseManager = "MOUSE MANAGER";
     private const string MenuIdleState = "Cursor Check";
-    private const int MenuPointer = 1;
-    private float _menuUntil = -1f;   // main menu: look for the mouse manager until then
+    private const int MenuPointerCursor = 1;
+    private const float MenuWatch = 30f;
+    private float _menuUntil = -1f;   // main menu: keep the pointer drawn until then
+    private Il2Cpp.PlayMakerFSM _menuMouse;
+    // Menu FSMs that hide the cursor without changing NewCursor: path, hide state, last state seen.
+    private readonly (string path, string state)[] _menuHiders = { ("Menu System/Main selector enabler", "Enable"), ("Main Camera/Music", "Wait for Mouse") };
+    private readonly Il2Cpp.PlayMakerFSM[] _hiderFsms = new Il2Cpp.PlayMakerFSM[2];
+    private readonly string[] _hiderSeen = new string[2];
+    private bool _redraw;
+    private float _nextHiderSearch;
 
     private sealed class Plan
     {
@@ -113,7 +127,11 @@ public class CursorGuardFeature : Feature
         _fsmExcluded.Clear();
         _playerFsm = null;
         _nextPlayerSearch = 0f;
-        _menuUntil = sceneName == "Main Menu" ? Time.unscaledTime + 15f : -1f;
+        _menuUntil = sceneName == "Main Menu" ? Time.unscaledTime + MenuWatch : -1f;
+        _menuMouse = null;
+        _redraw = false;
+        _nextHiderSearch = 0f;
+        for (int i = 0; i < _hiderFsms.Length; i++) { _hiderFsms[i] = null; _hiderSeen[i] = null; }
     }
 
     // ------------------------------------------------------------------ hooks
@@ -164,9 +182,12 @@ public class CursorGuardFeature : Feature
         _swaps++;
     }
 
+    public override bool UpdateWhenDisabled => true;  // the main menu pointer has its own switch
+
     public override void OnUpdate()
     {
-        if (_menuUntil >= 0f) MenuPointerOnce();
+        if (_menuUntil >= 0f) MenuPointer();
+        if (!Enabled) return;
         if (_pending.Count == 0) return;
         bool free = PlayerFree();
         _tmp.Clear();
@@ -181,20 +202,45 @@ public class CursorGuardFeature : Feature
         foreach (var k in _tmp) Restore(k, _pending[k]);
     }
 
-    private void MenuPointerOnce()
+    private void MenuPointer()
     {
-        if (!_mainMenu.Value || Time.unscaledTime > _menuUntil) { _menuUntil = -1f; return; }
-        GameObject go = null;
-        foreach (var g in UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetRootGameObjects())
-            if (g != null && g.name == MenuMouseManager) { go = g; break; }
-        var fsm = FsmUtil.Get(go);
-        if (fsm == null || fsm.ActiveStateName != MenuIdleState) return;  // still hiding it on start
-        _menuUntil = -1f;
-        var cur = FsmUtil.Int(fsm, "NewCursor");
-        var shown = FsmUtil.Int(fsm, "CurrentCursor");
-        if (cur == null || shown == null || cur.Value != 0 || shown.Value != 0) return;  // the menu already set one
-        cur.Value = MenuPointer;
-        if (_log.Value) Core.Log.Msg($"[{Name}] main menu pointer shown at once");
+        if (!_mainMenu.Value || Time.unscaledTime > _menuUntil) { _menuUntil = -1f; _menuMouse = null; return; }
+        if (_menuMouse == null)
+        {
+            foreach (var g in UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetRootGameObjects())
+                if (g != null && g.name == MenuMouseManager) { _menuMouse = FsmUtil.Get(g); break; }
+            if (_menuMouse == null) return;
+        }
+        WatchHiders();
+        if (_menuMouse.ActiveStateName != MenuIdleState) return;  // still starting, or gamepad (hidden for good)
+        if (Cursor.visible && !_redraw) return;
+        _redraw = false;
+        var want = FsmUtil.Int(_menuMouse, "NewCursor");
+        var shown = FsmUtil.Int(_menuMouse, "CurrentCursor");
+        if (want == null || shown == null) { _menuUntil = -1f; return; }
+        if (want.Value <= 0) want.Value = MenuPointerCursor;
+        shown.Value = -1;  // differs from NewCursor: the manager's "Cursor Update" draws it and unhides the cursor
+        if (_log.Value) Core.Log.Msg($"[{Name}] main menu pointer redrawn (cursor {want.Value})");
+    }
+
+    // Notes when a menu FSM enters its hide state; the pointer is redrawn after it.
+    private void WatchHiders()
+    {
+        bool search = Time.unscaledTime >= _nextHiderSearch;
+        if (search) _nextHiderSearch = Time.unscaledTime + 0.25f;
+        for (int i = 0; i < _menuHiders.Length; i++)
+        {
+            if (_hiderFsms[i] == null)
+            {
+                if (!search) continue;
+                _hiderFsms[i] = FsmUtil.Get(GameObject.Find(_menuHiders[i].path));
+                if (_hiderFsms[i] == null) continue;
+            }
+            var st = _hiderFsms[i].ActiveStateName;
+            if (st == _hiderSeen[i]) continue;
+            _hiderSeen[i] = st;
+            if (st == _menuHiders[i].state) _redraw = true;
+        }
     }
 
     // ------------------------------------------------------------- restore

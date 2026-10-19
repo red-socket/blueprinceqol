@@ -3,7 +3,7 @@ using BluePrinceQoL.Features;
 using BluePrinceQoL.Util;
 using MelonLoader;
 
-[assembly: MelonInfo(typeof(BluePrinceQoL.Core), "Blue Prince QoL", "2.4.2", "Lucas Pospor")]
+[assembly: MelonInfo(typeof(BluePrinceQoL.Core), "Blue Prince QoL", "2.4.3", "Lucas Pospor")]
 [assembly: MelonGame("Dogubomb", "BLUE PRINCE")]
 
 namespace BluePrinceQoL;
@@ -66,7 +66,7 @@ public partial class Core : MelonMod
     {
         FsmHooks.Tick(HarmonyInstance);
         foreach (var f in _features)
-            if (f.Enabled) Safe(f, f.OnUpdate);
+            if (f.Enabled || f.UpdateWhenDisabled) Safe(f, f.OnUpdate);
     }
 
     public override void OnLateUpdate()

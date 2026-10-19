@@ -11,6 +11,8 @@ public abstract class Feature
 
     private MelonPreferences_Entry<bool> _enabled;
     public bool Enabled => _enabled.Value;
+    /// <summary>OnUpdate also runs while the feature is off (it then has to check Enabled itself).</summary>
+    public virtual bool UpdateWhenDisabled => false;
 
     public void Init()
     {
