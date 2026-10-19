@@ -28,6 +28,11 @@ namespace BluePrinceQoL.Features;
 /// vanilla that happens during the glide, before "Mouse On" activates HUD/Steps
 /// and HUD/Room Text, so it is free. If "Mouse On" ran first (the wait switched
 /// off entirely, as in 1.0 to 2.4), the tile entry cost a step.
+/// The hold is also kept until DAY/BLESSING SET and DAY/DARE ENGINE have left
+/// their start state, a 2s Wait from the scene start: BLESSING SET then loads
+/// today's blessing, which "Mouse On" -> ... -> "MONK BLESSING" reads (Blessing
+/// of the Monk). In vanilla the 12s wait always covers it; a fast day start
+/// could reach "Mouse On" first, and the Monk's room was not offered.
 /// The day-1 "watched the whole intro video" path ("Cameras On -Day 1") is
 /// left vanilla.
 /// </summary>
@@ -44,6 +49,14 @@ public class IntroSkipFeature : Feature
     // physics steps that register the tile the player lands in.
     private const float HoldTime = 0.3f;
     private readonly StateDurations _durations = new();
+
+    // DAY children that set themselves up during a 2s Wait in their start state ("State 1") and are read after "Mouse On".
+    private static readonly string[] StartupObjects = { "BLESSING SET", "DARE ENGINE" };
+    private const string StartupState = "State 1";
+    private readonly List<PmFsm> _startup = new();
+    private FsmFloat _wait;            // the shortened Wait of the camera state (null = none to hold)
+    private float _waitVanilla;
+    private float _heldSince = -1f;
 
     // Set while a skip is in progress: the next Cam Intro tween state is completed.
     private float _armedUntil = -1f;
@@ -71,6 +84,9 @@ public class IntroSkipFeature : Feature
         _dayFsm = null;
         _armedUntil = -1f;
         _syncFrames = 0;
+        _wait = null;
+        _heldSince = -1f;
+        _startup.Clear();
         _durations.RestoreAll();
     }
 
@@ -117,10 +133,16 @@ public class IntroSkipFeature : Feature
         }
 
         _durations.Begin(state);
+        _wait = null;
         foreach (var a in state.Actions)
         {
             if (a == null || !a.Enabled) continue;
-            if (a.TryCast<Wait>() is { } w) _durations.Scale(w.time, 0f, HoldTime, "Wait");
+            if (a.TryCast<Wait>() is { } w)
+            {
+                var vanilla = w.time?.Value ?? 0f;
+                _durations.Scale(w.time, 0f, HoldTime, "Wait");
+                if (w.time != null && w.time.Value < vanilla) { _wait = w.time; _waitVanilla = vanilla; }
+            }
             else if (a.TryCast<CameraFadeIn>() is { } fi) _durations.Scale(fi.time, 0f, HoldTime, "FadeIn");
         }
         if (_durations.Commit() == null && !_warnedNoActions)
@@ -133,7 +155,37 @@ public class IntroSkipFeature : Feature
         _dayFsm = state.Fsm;
         _dayStateName = state.Name;
         _dayDeadline = Time.unscaledTime + HoldTime + 2f;
+        _startup.Clear();
+        foreach (var n in StartupObjects)
+        {
+            var t = day.transform.Find(n);
+            if (t == null) continue;
+            foreach (var pm in t.GetComponents<Il2Cpp.PlayMakerFSM>())
+                if (pm != null && pm.Fsm != null && pm.Fsm.Name == "FSM") _startup.Add(pm.Fsm);
+        }
+        HoldForStartup();
         Core.Log.Msg($"[{Name}] skipping day-start glide ({state.Name})");
+    }
+
+    // While a startup FSM is still in its start Wait, the camera state's Wait gets its vanilla length back (so it can't
+    // finish); once they are all past it, the short hold again (the Wait then ends on its next update). True = waiting.
+    private bool HoldForStartup()
+    {
+        if (_wait == null) return false;
+        bool waiting = false;
+        foreach (var f in _startup)
+        {
+            try { if (f.Active && f.ActiveStateName == StartupState) { waiting = true; break; } }
+            catch { /* destroyed: not waiting */ }
+        }
+        _wait.Value = waiting ? _waitVanilla : HoldTime;
+        if (waiting && _heldSince < 0f) _heldSince = Time.unscaledTime;
+        else if (!waiting && _heldSince >= 0f)
+        {
+            Core.Log.Msg($"[{Name}] waited {Time.unscaledTime - _heldSince:0.0}s for the day's blessing and dare setup");
+            _heldSince = -1f;
+        }
+        return waiting;
     }
 
     private bool CamIntroLooksRight(GameObject day)
@@ -206,7 +258,8 @@ public class IntroSkipFeature : Feature
         }
 
         if (_dayFsm == null) return;
-        if (_dayFsm.ActiveStateName != _dayStateName) { _dayFsm = null; return; }
+        if (_dayFsm.ActiveStateName != _dayStateName) { _dayFsm = null; _wait = null; return; }
+        if (HoldForStartup()) _dayDeadline = Time.unscaledTime + HoldTime + 2f;
         if (Time.unscaledTime < _dayDeadline) return;
         var fsm = _dayFsm;
         _dayFsm = null;
